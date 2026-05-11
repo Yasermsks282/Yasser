@@ -1,0 +1,71 @@
+from flask import Flask, request, jsonify
+import cloudscraper
+from bs4 import BeautifulSoup
+import re
+import logging
+
+app = Flask(__name__)
+
+# إعداد الحساب والجلسة
+class IVAS_BRIDGE:
+    def __init__(self):
+        self.scraper = cloudscraper.create_scraper()
+        self.base_url = "https://ivas.tempnum.qzz.io"
+        self.email = "y41942934@gmail.com"
+        self.password = "yaser1234##"
+        self.logged_in = False
+
+    def login(self):
+        try:
+            res = self.scraper.get(f"{self.base_url}/login")
+            soup = BeautifulSoup(res.text, 'html.parser')
+            token = soup.find('input', {'name': '_token'})['value']
+            
+            payload = {'_token': token, 'email': self.email, 'password': self.password}
+            login_res = self.scraper.post(f"{self.base_url}/login", data=payload)
+            
+            if "dashboard" in login_res.url:
+                self.logged_in = True
+                return True
+            return False
+        except:
+            return False
+
+bridge = IVAS_BRIDGE()
+
+@app.route('/api/get_num')
+def get_num():
+    country = request.args.get('country')
+    service = request.args.get('service', '1')
+    
+    if not bridge.logged_in: bridge.login()
+    
+    order_url = f"{bridge.base_url}/portal/numbers/order/get"
+    try:
+        res = bridge.scraper.post(order_url, data={'country': country, 'service': service})
+        return res.text # يرجع بيانات الرقم (مثل رقم الهاتف والمعرف)
+    except:
+        return jsonify({"error": "Failed to fetch number"})
+
+@app.route('/api/get_sms')
+def get_sms():
+    phone = request.args.get('phone')
+    if not bridge.logged_in: bridge.login()
+    
+    try:
+        res = bridge.scraper.get(f"{bridge.base_url}/portal/sms/received/getsms")
+        soup = BeautifulSoup(res.text, 'html.parser')
+        cards = soup.find_all('div', class_='card-body')
+        
+        for card in cards:
+            if phone in card.get_text():
+                msg = card.find('p', class_='mb-0').get_text().strip()
+                code = re.findall(r'\d{4,6}', msg) # استخراج كود من 4 لـ 6 أرقام
+                return jsonify({"status": "success", "sms": msg, "code": code[0] if code else ""})
+        
+        return jsonify({"status": "waiting"})
+    except:
+        return jsonify({"error": "Failed to fetch SMS"})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
